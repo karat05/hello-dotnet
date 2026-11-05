@@ -1,0 +1,64 @@
+name: .NET CI/CD
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+      - run: dotnet restore src/HelloDotnet.csproj && dotnet restore tests/HelloDotnet.Tests.csproj
+      - run: dotnet format src/HelloDotnet.csproj --verify-no-changes
+      - run: dotnet format tests/HelloDotnet.Tests.csproj --verify-no-changes
+      - run: dotnet build tests/HelloDotnet.Tests.csproj -c Release --no-restore
+      - run: dotnet test tests/HelloDotnet.Tests.csproj -c Release --no-build
+
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - rid: linux-x64
+            artifact: hello-dotnet-linux-x64
+          - rid: linux-arm64
+            artifact: hello-dotnet-linux-arm64
+          - rid: win-x64
+            artifact: hello-dotnet-windows-x64.exe
+          - rid: osx-x64
+            artifact: hello-dotnet-macos-x64
+          - rid: osx-arm64
+            artifact: hello-dotnet-macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Publish
+        run: |
+          dotnet publish src/HelloDotnet.csproj -c Release -r ${{ matrix.rid }} \
+            --self-contained true -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true -o dist/${{ matrix.rid }}
+      - name: Rename binary
+        run: |
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            mv dist/${{ matrix.rid }}/hello-dotnet.exe dist/${{ matrix.artifact }}
+          else
+            mv dist/${{ matrix.rid }}/hello-dotnet dist/${{ matrix.artifact }}
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.artifact }}
